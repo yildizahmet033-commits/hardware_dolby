@@ -10,6 +10,7 @@ import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.util.Log
 import org.lunaris.dolby.DolbyConstants
 import org.lunaris.dolby.DolbyConstants.DsParam
 import org.lunaris.dolby.R
@@ -120,12 +121,19 @@ class DolbyRepository(private val context: Context) : AutoCloseable {
         }
     }
 
-    fun applySavedState() {
-    checkEffect()
-        val enabled = defaultPrefs.getBoolean(DolbyConstants.PREF_ENABLE, false)
-        dolbyEffect.dsOn = enabled
-        if (enabled) {
-            restoreSavedProfileIfNeeded()
+    /** Returns false when the effect rejected the state, e.g. while control is being handed over. */
+    fun applySavedState(): Boolean {
+        return try {
+            checkEffect()
+            val enabled = defaultPrefs.getBoolean(DolbyConstants.PREF_ENABLE, false)
+            dolbyEffect.dsOn = enabled
+            if (enabled) {
+                restoreSavedProfileIfNeeded()
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to apply saved state", e)
+            false
         }
     }
 

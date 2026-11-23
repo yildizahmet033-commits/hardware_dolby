@@ -30,6 +30,8 @@ class DolbyEffectService : Service() {
     private val isDeviceStateMemoryEnabled: Boolean
         get() = dolbyPrefs.getBoolean(DolbyConstants.PREF_DEVICE_STATE_MEMORY, false)
     private val handler = Handler()
+    private var applyRetries = 0
+    private val applyRetryRunnable = Runnable { tryApplySavedState() }
     private lateinit var repository: DolbyRepository
     private lateinit var deviceStateManager: DeviceStateManager
     private var previousActiveDevice: AudioDeviceInfo? = null
@@ -57,7 +59,7 @@ class DolbyEffectService : Service() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             val isActive = configs?.any { it.isActive } == true
             if (isActive) {
-                repository.applySavedState()
+                applySavedState()
             }
         }
     }
@@ -72,17 +74,30 @@ class DolbyEffectService : Service() {
             if (isDeviceStateMemoryEnabled) {
                 val key = deviceStateManager.deviceKey(currentDevice)
                 val restored = deviceStateManager.restoreSnapshot(key, repository)
-                if (!restored) repository.applySavedState()
+                if (!restored) applySavedState()
             } else {
-                repository.applySavedState()
+                applySavedState()
             }
         } else {
-            repository.applySavedState()
+            applySavedState()
         }
 
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, handler)
         audioManager.registerAudioPlaybackCallback(playbackCallback, handler)
         Log.d(TAG, "Dolby effect service created")
+    }
+
+    private fun applySavedState() {
+        applyRetries = 0
+        handler.removeCallbacks(applyRetryRunnable)
+        tryApplySavedState()
+    }
+
+    private fun tryApplySavedState() {
+        if (repository.applySavedState()) return
+        if (applyRetries++ < MAX_APPLY_RETRIES) {
+            handler.postDelayed(applyRetryRunnable, APPLY_RETRY_DELAY_MS)
+        }
     }
 
     private fun handleDeviceChange() {
@@ -104,16 +119,16 @@ class DolbyEffectService : Service() {
                 val restored = deviceStateManager.restoreSnapshot(newKey, repository)
                 if (!restored) {
                     Log.d(TAG, "First time device, applying saved state as base")
-                    repository.applySavedState()
+                    applySavedState()
                 }
             } else {
                 Log.d(TAG, "Device state memory disabled, applying saved state")
-                repository.applySavedState()
+                applySavedState()
             }
             previousActiveDevice = newDevice
         } else {
             repository.updateSpeakerState()
-            repository.applySavedState()
+            applySavedState()
             previousActiveDevice = null
         }
     }
@@ -152,7 +167,7 @@ class DolbyEffectService : Service() {
         "name=$productName,type=$type,id=$id,address=$address,isSink=$isSink"
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        repository.applySavedState()
+        applySavedState()
         return START_STICKY
     }
 
@@ -174,6 +189,8 @@ class DolbyEffectService : Service() {
 
     companion object {
         private const val TAG = "DolbyEffectService"
+        private const val MAX_APPLY_RETRIES = 5
+        private const val APPLY_RETRY_DELAY_MS = 500L
 
         private val ATTRIBUTES_MEDIA = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
